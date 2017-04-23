@@ -17,7 +17,7 @@ type DeleteHostUsingAPI struct{ types.BaseScenario }
 func (s *AddHostUsingAPI) Run(si *types.SharedInfo) error {
 	logrus.Debugf("Running Scenario: %v", s.Name)
 
-	return utils.AddHostsUsingAPI(si, 1)
+	return utils.AddHostsUsingAPI(si, 1, si.MaxClusterSize)
 }
 
 // Run ...

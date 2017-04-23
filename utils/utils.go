@@ -197,8 +197,15 @@ func StartDockerProxyForHost(si *types.SharedInfo, hostID string) (string, error
 
 }
 
+// AddHostsUsingAPIWithoutAnyChecks ...
+func AddHostsUsingAPIWithoutAnyChecks(si *types.SharedInfo, N int) error {
+	// TODO: Fix for other clouds?
+	return AddDigitalOceanHostsUsingAPI(si, N)
+
+}
+
 // AddHostsUsingAPI ...
-func AddHostsUsingAPI(si *types.SharedInfo, N int) error {
+func AddHostsUsingAPI(si *types.SharedInfo, N, expectedMaxSize int) error {
 	listOpts := &client.ListOpts{
 		Filters: map[string]interface{}{
 			"name_prefix": "cmhost",
@@ -214,26 +221,25 @@ func AddHostsUsingAPI(si *types.SharedInfo, N int) error {
 
 	currentNumOfHosts := len(collection.Data)
 
-	if currentNumOfHosts > si.MaxClusterSize {
+	if currentNumOfHosts > expectedMaxSize {
 		return fmt.Errorf("current number of hosts(%v) is more than maximum size(%v), can't add",
-			currentNumOfHosts, si.MaxClusterSize)
+			currentNumOfHosts, expectedMaxSize)
 	}
 
 	if N == 0 {
-		N = si.MaxClusterSize - currentNumOfHosts
+		N = expectedMaxSize - currentNumOfHosts
 	}
 
 	afterAddNumOfHosts := currentNumOfHosts + N
-	if afterAddNumOfHosts > si.MaxClusterSize {
+	if afterAddNumOfHosts > expectedMaxSize {
 		logrus.Infof("N(%v)to add will make the cluster size > maximum size (%v)",
 			N, si.MinClusterSize)
-		newN := si.MaxClusterSize - currentNumOfHosts
+		newN := expectedMaxSize - currentNumOfHosts
 		logrus.Infof("hence adding only %v hosts, instead of %v", newN, N)
 		N = newN
 	}
 
-	// TODO: Fix for other clouds?
-	return AddDigitalOceanHosts(si, N)
+	return AddHostsUsingAPIWithoutAnyChecks(si, N)
 }
 
 // DeleteHostsUsingAPI ...
@@ -303,9 +309,24 @@ func GetNRandomPicksFromPool(N, poolSize int) map[int]int {
 	return picks
 }
 
-// AddDigitalOceanHosts ...
+func getDORandomHostImageName() string {
+	images := []string{"centos-7-x64", "ubuntu-16-04-x64", "ubuntu-14-04-x64", "fedora-24-x64"}
+	return images[rand.Intn(len(images))]
+}
+
+func getDORandomHostSize() string {
+	sizes := []string{"1gb", "2gb", "4gb", "8gb", "16gb", "m-16gb"}
+	return sizes[rand.Intn(len(sizes))]
+}
+
+func getDORandomHostLocation() string {
+	locations := []string{"sfo1", "sfo2", "nyc1", "nyc2", "nyc3"}
+	return locations[rand.Intn(len(locations))]
+}
+
+// AddDigitalOceanHostsUsingAPI ...
 // If N=0, random number depends on the logic
-func AddDigitalOceanHosts(si *types.SharedInfo, N int) error {
+func AddDigitalOceanHostsUsingAPI(si *types.SharedInfo, N int) error {
 	if N == 0 {
 		// TODO: Fix this
 		N = 1
@@ -352,5 +373,176 @@ func RandomToken() string {
 
 // SetupCluster ...
 func SetupCluster(si *types.SharedInfo) error {
-	return AddHostsUsingAPI(si, si.StartClusterSize)
+	return AddHostsUsingAPI(si, si.StartClusterSize, si.StartClusterSize)
+}
+
+// AddStack creates an empty stack and start it
+func AddStack(si *types.SharedInfo, stackName string) error {
+	logrus.Debugf("AddStack: %v", stackName)
+	listOpts := &client.ListOpts{
+		Filters: map[string]interface{}{
+			"name_eq": stackName,
+		},
+	}
+
+	collection, err := si.Client.Stack.List(listOpts)
+	if err != nil {
+		return err
+	}
+
+	if len(collection.Data) > 0 {
+		return fmt.Errorf("stack already exists with given name: %v", stackName)
+	}
+
+	stack := client.Stack{
+		Name:          stackName,
+		StartOnCreate: true,
+	}
+	_, err = si.Client.Stack.Create(&stack)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// DeleteStack creates an empty stack and start it
+func DeleteStack(si *types.SharedInfo, stackName string) error {
+	logrus.Debugf("DeleteStack: %v", stackName)
+	listOpts := &client.ListOpts{
+		Filters: map[string]interface{}{
+			"name_eq": stackName,
+		},
+	}
+
+	collection, err := si.Client.Stack.List(listOpts)
+	if err != nil {
+		return err
+	}
+
+	if !(len(collection.Data) > 0) {
+		return fmt.Errorf("stack doesn't exist with given name: %v", stackName)
+	}
+
+	stack := collection.Data[0]
+	err = si.Client.Stack.Delete(&stack)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// AddService ...
+func AddService(si *types.SharedInfo, stackID, serviceName string) error {
+	logrus.Debugf("AddService: %v", serviceName)
+
+	service := client.Service{
+		StackId:       stackID,
+		Name:          serviceName,
+		Scale:         1,
+		StartOnCreate: true,
+		LaunchConfig: &client.LaunchConfig{
+			ImageUuid:             "docker:leodotcloud/self-health-status:dev",
+			StdinOpen:             true,
+			StartOnCreate:         true,
+			InstanceTriggeredStop: "stop",
+			Vcpu: 1,
+			Labels: map[string]interface{}{
+				"io.rancher.container.pull_image": "always",
+			},
+			HealthCheck: &client.InstanceHealthCheck{
+				HealthyThreshold:    2,
+				InitializingTimeout: 60000,
+				Interval:            2000,
+				Port:                80,
+				ReinitializingTimeout: 60000,
+				RequestLine:           `GET "/v1/healthcheck" "HTTP/1.0"`,
+				ResponseTimeout:       2000,
+				Strategy:              "none",
+				UnhealthyThreshold:    3,
+			},
+		},
+	}
+
+	_, err := si.Client.Service.Create(&service)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func getServiceByName(si *types.SharedInfo, serviceName string) (*client.Service, error) {
+	listOpts := &client.ListOpts{
+		Filters: map[string]interface{}{
+			"name_eq": serviceName,
+		},
+	}
+
+	collection, err := si.Client.Service.List(listOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	if !(len(collection.Data) > 0) {
+		return nil, fmt.Errorf("service doesn't exist with given name: %v", serviceName)
+	}
+
+	service := collection.Data[0]
+
+	return &service, nil
+}
+
+// DeleteServiceByName ...
+func DeleteServiceByName(si *types.SharedInfo, serviceName string) error {
+	logrus.Debugf("DeleteService: %v", serviceName)
+
+	service, err := getServiceByName(si, serviceName)
+	if err != nil {
+		return err
+	}
+
+	err = si.Client.Service.Delete(service)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// DeleteServiceByID ...
+func DeleteServiceByID(si *types.SharedInfo, serviceID string) error {
+	logrus.Debugf("DeleteService: %v", serviceID)
+
+	service, err := si.Client.Service.ById(serviceID)
+	if err != nil {
+		return err
+	}
+
+	err = si.Client.Service.Delete(service)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ChangeServiceScale ...
+func ChangeServiceScale(si *types.SharedInfo, serviceName string, newScale int) error {
+	logrus.Debugf("ChangeServiceScale of %v to %v", serviceName, newScale)
+
+	service, err := getServiceByName(si, serviceName)
+	if err != nil {
+		return err
+	}
+
+	updates := map[string]interface{}{
+		"scale": newScale,
+	}
+	_, err = si.Client.Service.Update(service, updates)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
