@@ -315,11 +315,12 @@ func getDORandomHostImageName() string {
 }
 
 func getDORandomHostSize() string {
-	sizes := []string{"1gb", "2gb", "4gb", "8gb", "16gb", "m-16gb"}
+	//sizes := []string{"1gb", "2gb", "4gb", "8gb", "16gb", "m-16gb"}
+	sizes := []string{"1gb", "2gb", "4gb", "8gb"}
 	return sizes[rand.Intn(len(sizes))]
 }
 
-func getDORandomHostLocation() string {
+func getDORandomRegion() string {
 	locations := []string{"sfo1", "sfo2", "nyc1", "nyc2", "nyc3"}
 	return locations[rand.Intn(len(locations))]
 }
@@ -345,10 +346,10 @@ func AddDigitalOceanHostsUsingAPI(si *types.SharedInfo, N int) error {
 		doConfig := &client.DigitaloceanConfig{
 			AccessToken:       si.DigitalOceanAccessToken,
 			Backups:           false,
-			Image:             "ubuntu-16-04-x64",
+			Image:             getDORandomHostImageName(),
 			PrivateNetworking: false,
-			Region:            "sfo1",
-			Size:              "1gb",
+			Region:            getDORandomRegion(),
+			Size:              getDORandomHostSize(),
 			SshUser:           "root",
 		}
 		doHost.DigitaloceanConfig = doConfig
@@ -373,11 +374,28 @@ func RandomToken() string {
 
 // SetupCluster ...
 func SetupCluster(si *types.SharedInfo) error {
-	return AddHostsUsingAPI(si, si.StartClusterSize, si.StartClusterSize)
+	logrus.Debugf("SetupCluster")
+
+	err := AddHostsUsingAPI(si, si.StartClusterSize, si.StartClusterSize)
+	if err != nil {
+		return err
+	}
+
+	stack, err := AddStack(si, "cmstack-long")
+	if err != nil {
+		return err
+	}
+
+	_, err = AddService(si, stack.Id, "cmservice-long", false)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // AddStack creates an empty stack and start it
-func AddStack(si *types.SharedInfo, stackName string) error {
+func AddStack(si *types.SharedInfo, stackName string) (*client.Stack, error) {
 	logrus.Debugf("AddStack: %v", stackName)
 	listOpts := &client.ListOpts{
 		Filters: map[string]interface{}{
@@ -387,23 +405,18 @@ func AddStack(si *types.SharedInfo, stackName string) error {
 
 	collection, err := si.Client.Stack.List(listOpts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if len(collection.Data) > 0 {
-		return fmt.Errorf("stack already exists with given name: %v", stackName)
+		return &collection.Data[0], nil
 	}
 
 	stack := client.Stack{
 		Name:          stackName,
 		StartOnCreate: true,
 	}
-	_, err = si.Client.Stack.Create(&stack)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return si.Client.Stack.Create(&stack)
 }
 
 // DeleteStack creates an empty stack and start it
@@ -434,10 +447,15 @@ func DeleteStack(si *types.SharedInfo, stackName string) error {
 }
 
 // AddService ...
-func AddService(si *types.SharedInfo, stackID, serviceName string, enableHealthCheck bool) error {
+func AddService(si *types.SharedInfo, stackID, serviceName string, enableHealthCheck bool) (*client.Service, error) {
 	logrus.Debugf("AddService: %v", serviceName)
 
-	service := client.Service{
+	service, err := getServiceByName(si, serviceName)
+	if err == nil {
+		return service, nil
+	}
+
+	service = &client.Service{
 		StackId:       stackID,
 		Name:          serviceName,
 		Scale:         1,
@@ -468,12 +486,7 @@ func AddService(si *types.SharedInfo, stackID, serviceName string, enableHealthC
 		}
 	}
 
-	_, err := si.Client.Service.Create(&service)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return si.Client.Service.Create(service)
 }
 
 func getServiceByName(si *types.SharedInfo, serviceName string) (*client.Service, error) {
@@ -548,4 +561,9 @@ func ChangeServiceScale(si *types.SharedInfo, serviceName string, newScale int) 
 	}
 
 	return nil
+}
+
+// AddLongRunningStack creates a stack with the name cmstack-long-...
+// so that this stack is never deleted in any of the chaos tests
+func AddLongRunningStack() {
 }

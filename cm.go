@@ -41,16 +41,17 @@ type ChaosMonkey struct {
 }
 
 // NewChaosMonkey returns a new instance of ChaosMonkey
-func NewChaosMonkey(url, rancherProjectID, rancherAccessKey, rancherSecretKey,
-	digitaloceanAccessToken string,
-	startClusterSize, minClusterSize, maxClusterSize,
-	minWait, maxWait int, seed int64) (*ChaosMonkey, error) {
+func NewChaosMonkey(url, rancherProjectID, rancherAccessKey, rancherSecretKey string,
+	minWait, maxWait int, seed int64,
+	sharedInfo *types.SharedInfo) (*ChaosMonkey, error) {
 	// TODO: check if valid URL
 	// TODO: check if access key/secret key are working
 	client, err := utils.GetClientForProject(url, rancherProjectID, rancherAccessKey, rancherSecretKey)
 	if err != nil {
 		return nil, err
 	}
+	sharedInfo.Client = client
+	// TODO: If no cloud provider is specified, disable other options dependent on that.
 
 	if seed == 0 {
 		seed = time.Now().UTC().UnixNano()
@@ -66,13 +67,7 @@ func NewChaosMonkey(url, rancherProjectID, rancherAccessKey, rancherSecretKey,
 		minWait:          minWait,
 		maxWait:          maxWait,
 		seed:             seed,
-		sharedInfo: &types.SharedInfo{
-			Client:                  client,
-			DigitalOceanAccessToken: digitaloceanAccessToken,
-			StartClusterSize:        startClusterSize,
-			MinClusterSize:          minClusterSize,
-			MaxClusterSize:          maxClusterSize,
-		},
+		sharedInfo:       sharedInfo,
 	}, nil
 }
 
