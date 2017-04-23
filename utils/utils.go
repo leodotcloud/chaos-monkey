@@ -434,7 +434,7 @@ func DeleteStack(si *types.SharedInfo, stackName string) error {
 }
 
 // AddService ...
-func AddService(si *types.SharedInfo, stackID, serviceName string) error {
+func AddService(si *types.SharedInfo, stackID, serviceName string, enableHealthCheck bool) error {
 	logrus.Debugf("AddService: %v", serviceName)
 
 	service := client.Service{
@@ -451,18 +451,21 @@ func AddService(si *types.SharedInfo, stackID, serviceName string) error {
 			Labels: map[string]interface{}{
 				"io.rancher.container.pull_image": "always",
 			},
-			HealthCheck: &client.InstanceHealthCheck{
-				HealthyThreshold:    2,
-				InitializingTimeout: 60000,
-				Interval:            2000,
-				Port:                80,
-				ReinitializingTimeout: 60000,
-				RequestLine:           `GET "/v1/healthcheck" "HTTP/1.0"`,
-				ResponseTimeout:       2000,
-				Strategy:              "none",
-				UnhealthyThreshold:    3,
-			},
 		},
+	}
+
+	if enableHealthCheck {
+		service.LaunchConfig.HealthCheck = &client.InstanceHealthCheck{
+			HealthyThreshold:    2,
+			InitializingTimeout: 60000,
+			Interval:            2000,
+			Port:                80,
+			ReinitializingTimeout: 60000,
+			RequestLine:           `GET "/v1/healthcheck" "HTTP/1.0"`,
+			ResponseTimeout:       2000,
+			Strategy:              "none",
+			UnhealthyThreshold:    3,
+		}
 	}
 
 	_, err := si.Client.Service.Create(&service)
