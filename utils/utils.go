@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math/rand"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -13,14 +14,48 @@ import (
 	dtypes "github.com/docker/docker/api/types"
 	dc "github.com/docker/docker/client"
 	"github.com/leodotcloud/chaos-monkey/types"
+	"github.com/rancher/go-rancher-metadata/metadata"
 	"github.com/rancher/go-rancher/v2"
 	"github.com/rancher/rancher-docker-api-proxy"
 )
 
+// GetParsedBaseURL ...
+func GetParsedBaseURL(inputURL string) (string, error) {
+	u, err := url.Parse(inputURL)
+	if err != nil {
+		return "", err
+	}
+	newURL := url.URL{
+		Scheme: u.Scheme,
+		Host:   u.Host,
+	}
+	return newURL.String(), nil
+}
+
+// GetRawClient ...
+func GetRawClient(url, accessKey, secretKey string) (*client.RancherClient, error) {
+	url = url + "/v2-beta"
+	c, err := client.NewRancherClient(&client.ClientOpts{
+		Url:       url,
+		AccessKey: accessKey,
+		SecretKey: secretKey,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return c, nil
+}
+
 // GetClientForProject gets the client for a specific Rancher Project.
 // TODO: validates the credentials provided
-func GetClientForProject(url, envID, accessKey, secretKey string) (*client.RancherClient, error) {
-	url = url + "/v2-beta/projects/" + envID + "/schemas"
+func GetClientForProject(url, projectID, accessKey, secretKey string) (*client.RancherClient, error) {
+	if projectID == "" {
+		return nil, fmt.Errorf("no project ID specified")
+	}
+
+	url = url + "/v2-beta/projects/" + projectID + "/schemas"
 	c, err := client.NewRancherClient(&client.ClientOpts{
 		Url:       url,
 		AccessKey: accessKey,
@@ -563,7 +598,212 @@ func ChangeServiceScale(si *types.SharedInfo, serviceName string, newScale int) 
 	return nil
 }
 
+// AddAPIAccountKey ...
+func AddAPIAccountKey(si *types.SharedInfo) error {
+	ak, err := si.Client.ApiKey.Create(&client.ApiKey{
+		Name: "juliet",
+	})
+	if err != nil {
+		return err
+	}
+
+	logrus.Debugf("ak: %#+v", *ak)
+	return nil
+}
+
+// EnableSystemRole ...
+func EnableSystemRole(si *types.SharedInfo) error {
+	return nil
+}
+
 // AddLongRunningStack creates a stack with the name cmstack-long-...
 // so that this stack is never deleted in any of the chaos tests
 func AddLongRunningStack() {
+}
+
+func getProjectList(si *types.SharedInfo) error {
+	listOpts := &client.ListOpts{Filters: map[string]interface{}{}}
+	collection, err := si.RawClient.Project.List(listOpts)
+	if err != nil {
+		return err
+	}
+
+	logrus.Infof("projects: %v", collection.Data)
+	return nil
+}
+
+// GetSelfProjectUUID ...
+func GetSelfProjectUUID() (string, error) {
+	mc, err := metadata.NewClientAndWait("http://rancher-metadata/2016-07-29")
+	if err != nil {
+		logrus.Errorf("error creating metadata client: %v", err)
+		return "", err
+	}
+
+	self, err := mc.GetSelfContainer()
+	if err != nil {
+		logrus.Errorf("error getting self container from metadata: %v", err)
+		return "", err
+	}
+
+	return self.EnvironmentUUID, nil
+}
+
+// GetSelfProjectID ...
+func GetSelfProjectID(rawClient *client.RancherClient) (string, error) {
+	selfProjectUUID, err := GetSelfProjectUUID()
+	if err != nil {
+		return "", err
+	}
+	logrus.Debugf("got selfProjectUUID from metadata: %v", selfProjectUUID)
+
+	listOpts := &client.ListOpts{
+		Filters: map[string]interface{}{
+			"uuid_eq": selfProjectUUID,
+		},
+	}
+
+	collection, err := rawClient.Project.List(listOpts)
+	if err != nil {
+		logrus.Errorf("error getting self project: %v", err)
+		return "", fmt.Errorf("probably access/secrey keys provided are not associated with 'isSystemRole: true'")
+	}
+
+	if len(collection.Data) == 0 {
+		e := fmt.Errorf("error finding self project using the API")
+		logrus.Errorf("%v", e)
+		return "", e
+	}
+
+	if len(collection.Data) != 1 {
+		e := fmt.Errorf("expecting only one match for self container but found: %v", len(collection.Data))
+		logrus.Errorf("error: %v", e)
+		return "", e
+	}
+
+	return collection.Data[0].Id, nil
+}
+
+// GetChaosMonkeyProjectID ...
+func GetChaosMonkeyProjectID(rawClient *client.RancherClient) (string, error) {
+	defaultChaosMonkeyProjectName := "chaosmonkey"
+
+	listOpts := &client.ListOpts{
+		Filters: map[string]interface{}{
+			"name_eq":  defaultChaosMonkeyProjectName,
+			"state_eq": "active",
+		},
+	}
+
+	collection, err := rawClient.Project.List(listOpts)
+	if err != nil {
+		logrus.Errorf("error getting self project: %v", err)
+		return "", err
+	}
+	logrus.Infof("collection: %+v", collection)
+
+	l := len(collection.Data)
+	if l > 1 {
+		e := fmt.Errorf("expecting only one chaosmonkey environment but found: %v", l)
+		logrus.Errorf("%v", e)
+		return "", e
+	} else if l == 1 {
+		return collection.Data[0].Id, nil
+	}
+
+	// TODO: support for custom catalog
+	p, err := CreateProject(rawClient, defaultChaosMonkeyProjectName, "Cattle", "library")
+	if err != nil {
+		return "", err
+	}
+
+	return p.Id, nil
+}
+
+// CreateProject ...
+// TODO: Probably needs work for custom template
+func CreateProject(rawClient *client.RancherClient, projectName, projectTemplateName, catalogName string) (*client.Project, error) {
+	logrus.Debugf("CreateProject: projectName=%v projectTemplateName=%v catalogName=%v",
+		projectName, projectTemplateName, catalogName)
+
+	listOpts := &client.ListOpts{
+		Filters: map[string]interface{}{
+			"name_like":       "%" + projectTemplateName + "%",
+			"externalId_like": "catalog://" + catalogName + "%",
+		},
+	}
+
+	collection, err := rawClient.ProjectTemplate.List(listOpts)
+	if err != nil {
+		logrus.Errorf("error getting self project: %v", err)
+		return nil, err
+	}
+
+	l := len(collection.Data)
+	if l == 0 {
+		return nil, fmt.Errorf("no project templates found")
+	} else if l > 1 {
+		return nil, fmt.Errorf("expecting only one project template but found: %v", l)
+	}
+
+	template := collection.Data[0]
+
+	// TODO: Needs work for authentication
+	p := &client.Project{
+		Name:              projectName,
+		ProjectTemplateId: template.Id,
+		AllowSystemRole:   true,
+	}
+
+	p, err = rawClient.Project.Create(p)
+	if err != nil {
+		return nil, err
+	}
+
+	logrus.Debugf("created project: %v", p)
+	return p, nil
+}
+
+// DeleteProject ...
+// TODO: Probably needs work for custom template
+func DeleteProject(rawClient *client.RancherClient, projectName string) error {
+	logrus.Debugf("DeleteProject: projectName=%v", projectName)
+
+	listOpts := &client.ListOpts{
+		Filters: map[string]interface{}{
+			"name_eq":   projectName,
+			"state_neq": "removed",
+		},
+	}
+
+	collection, err := rawClient.Project.List(listOpts)
+	if err != nil {
+		logrus.Errorf("error getting self project: %v", err)
+		return err
+	}
+
+	l := len(collection.Data)
+	if l == 0 {
+		return fmt.Errorf("no project found with name: %v", projectName)
+	} else if l > 1 {
+		return fmt.Errorf("expecting only one project with name %v but found: %v", projectName, l)
+	}
+
+	p := &collection.Data[0]
+
+	if p.State != "inactive" {
+		_, err = rawClient.Project.ActionDeactivate(p)
+		if err != nil {
+			return err
+		}
+	}
+
+	//TODO: Not working
+	err = rawClient.Project.Delete(p)
+	if err != nil {
+		return err
+	}
+
+	logrus.Infof("deleted project: %v", projectName)
+	return nil
 }

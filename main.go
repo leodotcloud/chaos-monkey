@@ -18,24 +18,23 @@ func main() {
 	app.Version = VERSION
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
-			Name:   "rancher-url",
+			Name:   "cattle-url",
 			Value:  "",
-			EnvVar: "RANCHER_URL",
+			EnvVar: "CATTLE_URL",
 		},
 		cli.StringFlag{
-			Name:   "rancher-access-key",
+			Name:   "cattle-access-key",
 			Value:  "",
-			EnvVar: "RANCHER_ACCESS_KEY",
+			EnvVar: "CATTLE_ACCESS_KEY",
 		},
 		cli.StringFlag{
-			Name:   "rancher-project-id",
-			Value:  "1a5",
-			EnvVar: "RANCHER_PROJECT_ID",
+			Name:   "cattle-project-id",
+			EnvVar: "CATTLE_PROJECT_ID",
 		},
 		cli.StringFlag{
-			Name:   "rancher-secret-key",
+			Name:   "cattle-secret-key",
 			Value:  "",
-			EnvVar: "RANCHER_SECRET_KEY",
+			EnvVar: "CATTLE_SECRET_KEY",
 		},
 		cli.IntFlag{
 			Name:  "start-cluster-size",
@@ -120,10 +119,10 @@ func run(c *cli.Context) error {
 		logrus.SetLevel(logrus.DebugLevel)
 	}
 
-	rancherURL := c.String("rancher-url")
-	rancherAccessKey := c.String("rancher-access-key")
-	rancherSecretKey := c.String("rancher-secret-key")
-	rancherProjectID := c.String("rancher-project-id")
+	cattleURL := c.String("cattle-url")
+	cattleAccessKey := c.String("cattle-access-key")
+	cattleSecretKey := c.String("cattle-secret-key")
+	cattleProjectID := c.String("cattle-project-id")
 	minWait := c.Int("min-wait")
 	maxWait := c.Int("max-wait")
 	seed := c.Int64("seed")
@@ -144,27 +143,27 @@ func run(c *cli.Context) error {
 		MaxClusterSize:          c.Int("max-cluster-size"),
 	}
 
-	if rancherURL == "" {
+	if cattleURL == "" {
 		err = fmt.Errorf("Rancher URL not specified")
 		logrus.Errorf("error: %v", err)
 		return err
 	}
 
-	//if rancherAccessKey == "" {
+	//if cattleAccessKey == "" {
 	//	err = fmt.Errorf("Rancher Access Key not specified")
 	//	logrus.Errorf("error: %v", err)
 	//	return err
 	//}
 
-	//if rancherSecretKey == "" {
+	//if cattleSecretKey == "" {
 	//	err = fmt.Errorf("Rancher Secret Key not specified")
 	//	logrus.Errorf("error: %v", err)
 	//	return err
 	//}
 
-	logrus.Debugf("rancher-url: %v", rancherURL)
+	logrus.Debugf("cattle-url: %v", cattleURL)
 
-	cm, err := NewChaosMonkey(rancherURL, rancherProjectID, rancherAccessKey, rancherSecretKey,
+	cm, err := NewChaosMonkey(cattleURL, cattleProjectID, cattleAccessKey, cattleSecretKey,
 		minWait, maxWait, seed,
 		sharedInfo)
 	if err != nil {

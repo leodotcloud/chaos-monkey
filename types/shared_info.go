@@ -7,7 +7,7 @@ import (
 // SharedInfo ...
 type SharedInfo struct {
 	Client                  *client.RancherClient
-	Rawclient               *client.RancherClient
+	RawClient               *client.RancherClient
 	DockerProxies           map[string]string
 	UseDigitalOcean         bool
 	DigitalOceanAccessToken string

@@ -30,23 +30,44 @@ func test() {
 
 // ChaosMonkey continoulsy runs one of the chaos scenarios at random intervals
 type ChaosMonkey struct {
-	url              string
-	rancherAccessKey string
-	rancherSecretKey string
-	rancherProjectID string
-	minWait          int
-	maxWait          int
-	seed             int64
-	sharedInfo       *types.SharedInfo
+	url             string
+	cattleAccessKey string
+	cattleSecretKey string
+	cattleProjectID string
+	minWait         int
+	maxWait         int
+	seed            int64
+	sharedInfo      *types.SharedInfo
 }
 
 // NewChaosMonkey returns a new instance of ChaosMonkey
-func NewChaosMonkey(url, rancherProjectID, rancherAccessKey, rancherSecretKey string,
+func NewChaosMonkey(url, cattleProjectID, cattleAccessKey, cattleSecretKey string,
 	minWait, maxWait int, seed int64,
 	sharedInfo *types.SharedInfo) (*ChaosMonkey, error) {
 	// TODO: check if valid URL
 	// TODO: check if access key/secret key are working
-	client, err := utils.GetClientForProject(url, rancherProjectID, rancherAccessKey, rancherSecretKey)
+
+	parsedURL, err := utils.GetParsedBaseURL(url)
+	if err != nil {
+		return nil, err
+	}
+
+	rawClient, err := utils.GetRawClient(parsedURL, cattleAccessKey, cattleSecretKey)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: if using same setup, check if current environment has allowSystemRole.
+	// If already given a projectID, then ignore
+	if cattleProjectID == "" {
+		cattleProjectID, err = utils.GetChaosMonkeyProjectID(rawClient)
+		if err != nil {
+			return nil, err
+		}
+	}
+	logrus.Infof("using project id: %v", cattleProjectID)
+
+	client, err := utils.GetClientForProject(parsedURL, cattleProjectID, cattleAccessKey, cattleSecretKey)
 	if err != nil {
 		return nil, err
 	}
@@ -60,14 +81,14 @@ func NewChaosMonkey(url, rancherProjectID, rancherAccessKey, rancherSecretKey st
 
 	// TODO: Check which are actually needed
 	return &ChaosMonkey{
-		url:              url,
-		rancherAccessKey: rancherAccessKey,
-		rancherSecretKey: rancherSecretKey,
-		rancherProjectID: rancherProjectID,
-		minWait:          minWait,
-		maxWait:          maxWait,
-		seed:             seed,
-		sharedInfo:       sharedInfo,
+		url:             url,
+		cattleAccessKey: cattleAccessKey,
+		cattleSecretKey: cattleSecretKey,
+		cattleProjectID: cattleProjectID,
+		minWait:         minWait,
+		maxWait:         maxWait,
+		seed:            seed,
+		sharedInfo:      sharedInfo,
 	}, nil
 }
 
